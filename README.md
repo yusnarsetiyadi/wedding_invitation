@@ -1,4 +1,4 @@
-# 💌 Template website undangan pernikahan sederhana
+# 💌 Template website undangan pernikahan sederhana 
 
 ![Thumbnail](/assets/images/banner.webp)
 
