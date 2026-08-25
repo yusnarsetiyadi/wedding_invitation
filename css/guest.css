@@ -20,7 +20,7 @@ html[data-bs-theme="light"] .font-esthetic {
 }
 
 html[data-bs-theme="dark"] .font-esthetic {
-    color: var(--color-soft-pink);
+    color: var(--color-highlight);
 }
 
 .font-arabic {
@@ -54,12 +54,12 @@ html[data-bs-theme="light"] .btn-transparent {
 }
 
 html[data-bs-theme="light"] .color-theme-svg {
-    color: var(--color-bg-primary);
+    color: var(--color-card-bg);
     background-color: var(--color-bg-primary);
 }
 
 html[data-bs-theme="dark"] .color-theme-svg {
-    color: var(--color-dark-bg);
+    color: var(--color-dark-card);
     background-color: var(--color-dark-bg);
 }
 
