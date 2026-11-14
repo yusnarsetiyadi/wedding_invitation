@@ -1,5 +1,13 @@
 const zIndex = 1057;
 
+const softPink = ['#FFFFFF', '#F9D5DE', '#EFA9BC', '#D9B382'];
+const rosePink = ['#EFA9BC', '#B9597A'];
+
+/**
+ * @returns {boolean}
+ */
+const isDisabled = () => !window.confetti || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
 /**
  * @returns {any}
  */
@@ -14,37 +22,41 @@ const heartShape = () => {
  * @returns {void}
  */
 export const basicAnimation = () => {
-    if (window.confetti) {
-        window.confetti({
-            origin: { y: 1 },
-            zIndex: zIndex
-        });
+    if (isDisabled()) {
+        return;
     }
+
+    window.confetti({
+        origin: { y: 1 },
+        zIndex: zIndex,
+        colors: softPink,
+    });
 };
 
 /**
- * @param {number} [until=15]
+ * @param {number} [until=6]
  * @returns {void}
  */
-export const openAnimation = (until = 15) => {
-    if (!window.confetti) {
+export const openAnimation = (until = 6) => {
+    if (isDisabled()) {
         return;
     }
 
     const duration = until * 1000;
     const animationEnd = Date.now() + duration;
-
     const heart = heartShape();
-    const colors = ['#FFC0CB', '#FF1493', '#C71585'];
 
     const randomInRange = (min, max) => {
         return Math.random() * (max - min) + min;
     };
 
-    const frame = () => {
+    const emit = () => {
         const timeLeft = animationEnd - Date.now();
+        if (timeLeft <= 0) {
+            return;
+        }
 
-        colors.forEach((color) => {
+        softPink.forEach((color) => {
             window.confetti({
                 particleCount: 1,
                 startVelocity: 0,
@@ -62,12 +74,11 @@ export const openAnimation = (until = 15) => {
             });
         });
 
-        if (timeLeft > 0) {
-            requestAnimationFrame(frame);
-        }
+        // Cukup 10x per detik agar hemat baterai di ponsel.
+        setTimeout(emit, 100);
     };
 
-    requestAnimationFrame(frame);
+    emit();
 };
 
 /**
@@ -76,7 +87,7 @@ export const openAnimation = (until = 15) => {
  * @returns {void}
  */
 export const tapTapAnimation = (div, duration = 50) => {
-    if (!window.confetti) {
+    if (isDisabled()) {
         return;
     }
 
@@ -85,10 +96,9 @@ export const tapTapAnimation = (div, duration = 50) => {
     const yPosition = Math.max(0.3, Math.min(1, (domRec.top / window.innerHeight) + 0.2));
 
     const heart = heartShape();
-    const colors = ['#FF69B4', '#FF1493'];
 
     const frame = () => {
-        colors.forEach((color) => {
+        rosePink.forEach((color) => {
             window.confetti({
                 particleCount: 2,
                 angle: 60,

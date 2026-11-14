@@ -1,8 +1,7 @@
-import { dto } from '../../connection/dto.js';
+import { util } from '../../common/util.js';
 import { storage } from '../../common/storage.js';
-import { session } from '../../common/session.js';
+import { api, errorMessage } from '../../connection/api.js';
 import { tapTapAnimation } from '../../libs/confetti.js';
-import { request, HTTP_PATCH, HTTP_POST, HTTP_STATUS_CREATED } from '../../connection/request.js';
 
 export const like = (() => {
 
@@ -21,12 +20,12 @@ export const like = (() => {
      * @returns {Promise<void>}
      */
     const love = async (button) => {
-
         const info = button.firstElementChild;
         const heart = button.lastElementChild;
 
         const id = button.getAttribute('data-uuid');
         const count = parseInt(info.getAttribute('data-count-like'));
+        const willLike = !likes.has(id);
 
         button.disabled = true;
 
@@ -34,42 +33,25 @@ export const like = (() => {
             navigator.vibrate(100);
         }
 
-        if (likes.has(id)) {
-            await request(HTTP_PATCH, '/api/comment/' + likes.get(id))
-                .token(session.getToken())
-                .send(dto.statusResponse)
-                .then((res) => {
-                    if (res.data.status) {
-                        likes.unset(id);
+        try {
+            await api.setLike(id, willLike);
 
-                        heart.classList.remove('fa-solid', 'text-danger');
-                        heart.classList.add('fa-regular');
+            if (willLike) {
+                likes.set(id, true);
+            } else {
+                likes.unset(id);
+            }
 
-                        info.setAttribute('data-count-like', String(count - 1));
-                    }
-                })
-                .finally(() => {
-                    info.innerText = info.getAttribute('data-count-like');
-                    button.disabled = false;
-                });
-        } else {
-            await request(HTTP_POST, '/api/comment/' + id)
-                .token(session.getToken())
-                .send(dto.uuidResponse)
-                .then((res) => {
-                    if (res.code === HTTP_STATUS_CREATED) {
-                        likes.set(id, res.data.uuid);
+            heart.classList.toggle('fa-solid', willLike);
+            heart.classList.toggle('text-danger', willLike);
+            heart.classList.toggle('fa-regular', !willLike);
 
-                        heart.classList.remove('fa-regular');
-                        heart.classList.add('fa-solid', 'text-danger');
-
-                        info.setAttribute('data-count-like', String(count + 1));
-                    }
-                })
-                .finally(() => {
-                    info.innerText = info.getAttribute('data-count-like');
-                    button.disabled = false;
-                });
+            info.setAttribute('data-count-like', String(count + (willLike ? 1 : -1)));
+            info.innerText = info.getAttribute('data-count-like');
+        } catch (err) {
+            util.notify(errorMessage(err)).error();
+        } finally {
+            button.disabled = false;
         }
     };
 
@@ -116,7 +98,7 @@ export const like = (() => {
         const ac = new AbortController();
 
         const bodyLike = document.getElementById(`body-content-${uuid}`);
-        bodyLike.addEventListener('touchend', () => tapTap(bodyLike), { signal: ac.signal });
+        bodyLike.addEventListener('touchend', () => tapTap(bodyLike), { signal: ac.signal, passive: true });
 
         listeners.set(uuid, ac);
     };

@@ -1,5 +1,8 @@
 export const progress = (() => {
 
+    // Undangan tetap bisa dibuka walau koneksi tamu lambat.
+    const maxWaitMs = 8000;
+
     /**
      * @type {HTMLElement|null}
      */
@@ -12,12 +15,7 @@ export const progress = (() => {
 
     let total = 0;
     let loaded = 0;
-    let valid = true;
-
-    /**
-     * @type {Promise<void>|null}
-     */
-    let cancelProgress = null;
+    let done = false;
 
     /**
      * @returns {void}
@@ -27,50 +25,35 @@ export const progress = (() => {
     };
 
     /**
-     * @returns {string}
+     * @returns {void}
      */
-    const showInformation = () => {
-        return `(${loaded}/${total}) [${parseInt((loaded / total) * 100).toFixed(0)}%]`;
+    const finish = () => {
+        if (done) {
+            return;
+        }
+
+        done = true;
+        bar.style.width = '100%';
+        document.dispatchEvent(new Event('undangan.progress.done'));
     };
 
     /**
      * @param {string} type
-     * @param {boolean} [skip=false]
      * @returns {void}
      */
-    const complete = (type, skip = false) => {
-        if (!valid) {
+    const complete = (type) => {
+        if (done) {
             return;
         }
 
         loaded += 1;
-        info.innerText = `Loading ${type} ${skip ? 'skipped' : 'complete'} ${showInformation()}`;
-        bar.style.width = Math.min((loaded / total) * 100, 100).toString() + '%';
+        info.innerText = `Memuat ${type} (${loaded}/${total})`;
+        bar.style.width = `${Math.min((loaded / total) * 100, 100)}%`;
 
-        if (loaded === total) {
-            valid = false;
-            cancelProgress = null;
-            document.dispatchEvent(new Event('undangan.progress.done'));
+        if (loaded >= total) {
+            finish();
         }
     };
-
-    /**
-     * @param {string} type
-     * @returns {void}
-     */
-    const invalid = (type) => {
-        if (valid) {
-            valid = false;
-            bar.style.backgroundColor = 'red';
-            info.innerText = `Error loading ${type} ${showInformation()}`;
-            document.dispatchEvent(new Event('undangan.progress.invalid'));
-        }
-    };
-
-    /**
-     * @returns {Promise<void>|null}
-     */
-    const getAbort = () => cancelProgress;
 
     /**
      * @returns {void}
@@ -79,14 +62,13 @@ export const progress = (() => {
         info = document.getElementById('progress-info');
         bar = document.getElementById('progress-bar');
         info.classList.remove('d-none');
-        cancelProgress = new Promise((res) => document.addEventListener('undangan.progress.invalid', res));
+
+        setTimeout(finish, maxWaitMs);
     };
 
     return {
         init,
         add,
-        invalid,
         complete,
-        getAbort,
     };
 })();

@@ -1,128 +1,85 @@
 import { progress } from './progress.js';
-import { cache } from '../../connection/cache.js';
+import { util } from '../../common/util.js';
 
 export const image = (() => {
 
     /**
-     * @type {NodeListOf<HTMLImageElement>|null}
-     */
-    let images = null;
-
-    /**
-     * @type {ReturnType<typeof cache>|null}
-     */
-    let c = null;
-
-    /**
-     * @type {object[]}
-     */
-    const urlCache = [];
-
-    /**
-     * @param {string} src 
-     * @returns {Promise<HTMLImageElement>}
-     */
-    const loadedImage = (src) => new Promise((res, rej) => {
-        const i = new Image();
-        i.onload = () => res(i);
-        i.onerror = rej;
-        i.src = src;
-    });
-
-    /**
-     * @param {HTMLImageElement} el 
-     * @param {string} src 
+     * @param {HTMLImageElement} el
      * @returns {Promise<void>}
      */
-    const appendImage = (el, src) => loadedImage(src).then((img) => {
-        el.width = img.naturalWidth;
-        el.height = img.naturalHeight;
-        el.classList.remove('opacity-0');
-        el.src = img.src;
-        img.remove();
+    const reveal = (el) => new Promise((res) => {
+        const src = el.getAttribute('data-src');
+        if (!src) {
+            res();
+            return;
+        }
 
-        progress.complete('image');
+        el.removeAttribute('data-src');
+
+        const preload = new Image();
+        preload.onload = () => {
+            el.src = src;
+            el.classList.remove('opacity-0');
+            res();
+        };
+        preload.onerror = () => {
+            console.error(`Gagal memuat gambar: ${src}`);
+            res();
+        };
+        preload.src = src;
     });
 
     /**
-     * @param {HTMLImageElement} el 
+     * Gambar utama ditunggu; sisanya dimuat ketika hampir terlihat.
      * @returns {void}
      */
-    const getByFetch = (el) => {
-        urlCache.push({
-            url: el.getAttribute('data-src'),
-            res: (url) => appendImage(el, url),
-            rej: (err) => {
-                console.error(err);
-                progress.invalid('image');
-            },
+    const load = () => {
+        document.querySelectorAll('img[data-src][fetchpriority]').forEach((el) => {
+            reveal(el).then(() => progress.complete('gambar'));
+        });
+
+        const observer = new IntersectionObserver((entries) => entries.forEach((e) => {
+            if (!e.isIntersecting) {
+                return;
+            }
+
+            observer.unobserve(e.target);
+            const targets = e.target.tagName === 'IMG' ? [e.target] : e.target.querySelectorAll('img[data-src]');
+            targets.forEach(reveal);
+        }), { rootMargin: '400px 0px' });
+
+        // Slide carousel yang tersembunyi dimuat bersama agar pergantiannya tidak kosong.
+        document.querySelectorAll('.carousel').forEach((c) => observer.observe(c));
+        document.querySelectorAll('img[data-src]:not([fetchpriority])').forEach((el) => {
+            if (!el.closest('.carousel')) {
+                observer.observe(el);
+            }
         });
     };
 
     /**
-     * @param {HTMLImageElement} el 
-     * @returns {void}
+     * @param {string} url
+     * @returns {Promise<void>}
      */
-    const getByDefault = (el) => {
-        el.onerror = () => progress.invalid('image');
-        el.onload = () => {
-            el.width = el.naturalWidth;
-            el.height = el.naturalHeight;
-            progress.complete('image');
-        };
-
-        if (el.complete && el.naturalWidth !== 0 && el.naturalHeight !== 0) {
-            progress.complete('image');
-        } else if (el.complete) {
-            progress.invalid('image');
+    const download = async (url) => {
+        try {
+            const res = await fetch(url);
+            const blob = await res.blob();
+            util.downloadBlob(blob, `foto_asha_yusnar_${Date.now()}.${blob.type.split('/')[1] ?? 'jpg'}`);
+        } catch {
+            util.notify('Gagal mengunduh foto.').error();
         }
     };
 
     /**
-     * @returns {boolean}
-     */
-    const hasDataSrc = () => Array.from(images).some((i) => i.hasAttribute('data-src'));
-
-    /**
-     * @returns {Promise<void>}
-     */
-    const load = async () => {
-        const imgs = Array.from(images);
-
-        /**
-         * @param {function} filter 
-         * @returns {Promise<void>}
-         */
-        const runGroup = async (filter) => {
-            urlCache.length = 0;
-            imgs.filter(filter).forEach((el) => el.hasAttribute('data-src') ? getByFetch(el) : getByDefault(el));
-            await c.run(urlCache, progress.getAbort());
-        };
-
-        await runGroup((el) => el.hasAttribute('fetchpriority'));
-        await runGroup((el) => !el.hasAttribute('fetchpriority'));
-    };
-
-    /**
-     * @param {string} blobUrl 
-     * @returns {void}
-     */
-    const download = (blobUrl) => {
-        c.download(blobUrl, `${window.location.hostname}_image_${Date.now()}`);
-    };
-
-    /**
-     * @returns {object}
+     * @returns {{ load: function, download: function }}
      */
     const init = () => {
-        c = cache('image').withForceCache();
-        images = document.querySelectorAll('img');
-        images.forEach(progress.add);
+        document.querySelectorAll('img[data-src][fetchpriority]').forEach(() => progress.add());
 
         return {
             load,
             download,
-            hasDataSrc,
         };
     };
 

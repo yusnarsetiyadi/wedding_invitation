@@ -1,352 +1,251 @@
 import { auth } from './auth.js';
 import { navbar } from './navbar.js';
 import { util } from '../../common/util.js';
-import { dto } from '../../connection/dto.js';
 import { theme } from '../../common/theme.js';
 import { lang } from '../../common/language.js';
-import { storage } from '../../common/storage.js';
 import { session } from '../../common/session.js';
 import { offline } from '../../common/offline.js';
+import { setStoragePrefix } from '../../common/storage.js';
 import { comment } from '../components/comment.js';
-import { pool, request, HTTP_GET, HTTP_PATCH, HTTP_PUT } from '../../connection/request.js';
+import { firebase } from '../../connection/firebase.js';
+import { api, errorMessage } from '../../connection/api.js';
 
 export const admin = (() => {
+
+    const switches = {
+        filterBadWord: 'is_filter',
+        confettiAnimation: 'is_confetti_animation',
+        replyComment: 'can_reply',
+        editComment: 'can_edit',
+        deleteComment: 'can_delete',
+    };
+
+    /**
+     * @param {number} value
+     * @returns {string}
+     */
+    const formatNumber = (value) => String(value).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+
+    /**
+     * @param {string} name
+     * @returns {void}
+     */
+    const showName = (name) => {
+        util.safeInnerHTML(document.getElementById('dashboard-name'), `${util.escapeHtml(name)}<i class="fa-solid fa-heart text-danger ms-2"></i>`);
+    };
 
     /**
      * @returns {Promise<void>}
      */
-    const getUserStats = () => auth.getDetailUser().then((res) => {
+    const getUserStats = async () => {
+        try {
+            const user = await api.currentUser();
+            const settings = await session.loadSettings();
+            const name = user.displayName ?? 'Asha & Yusnar';
 
-        util.safeInnerHTML(document.getElementById('dashboard-name'), `${util.escapeHtml(res.data.name)}<i class="fa-solid fa-hands text-warning ms-2"></i>`);
-        document.getElementById('dashboard-email').textContent = res.data.email;
-        document.getElementById('dashboard-accesskey').value = res.data.access_key;
-        document.getElementById('button-copy-accesskey').setAttribute('data-copy', res.data.access_key);
+            showName(name);
+            document.getElementById('dashboard-email').textContent = user.email;
+            document.getElementById('form-name').value = name;
 
-        document.getElementById('form-name').value = util.escapeHtml(res.data.name);
-        document.getElementById('form-timezone').value = res.data.tz;
-        document.getElementById('filterBadWord').checked = Boolean(res.data.is_filter);
-        document.getElementById('confettiAnimation').checked = Boolean(res.data.is_confetti_animation);
-        document.getElementById('replyComment').checked = Boolean(res.data.can_reply);
-        document.getElementById('editComment').checked = Boolean(res.data.can_edit);
-        document.getElementById('deleteComment').checked = Boolean(res.data.can_delete);
-        document.getElementById('dashboard-tenorkey').value = res.data.tenor_key;
+            Object.entries(switches).forEach(([id, key]) => {
+                document.getElementById(id).checked = Boolean(settings[key]);
+            });
 
-        storage('config').set('tenor_key', res.data.tenor_key);
-        document.dispatchEvent(new Event('undangan.session'));
+            comment.show();
 
-        request(HTTP_GET, '/api/stats').token(session.getToken()).withCache(1000 * 30).withForceCache().send().then((resp) => {
-            document.getElementById('count-comment').textContent = String(resp.data.comments).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-            document.getElementById('count-like').textContent = String(resp.data.likes).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-            document.getElementById('count-present').textContent = String(resp.data.present).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-            document.getElementById('count-absent').textContent = String(resp.data.absent).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-        });
-
-        comment.show();
-    });
+            const stats = await api.getStats();
+            document.getElementById('count-comment').textContent = formatNumber(stats.comments);
+            document.getElementById('count-like').textContent = formatNumber(stats.likes);
+            document.getElementById('count-present').textContent = formatNumber(stats.present);
+            document.getElementById('count-absent').textContent = formatNumber(stats.absent);
+        } catch (err) {
+            util.notify(errorMessage(err)).error();
+        }
+    };
 
     /**
-     * @param {HTMLElement} checkbox
-     * @param {string} type
-     * @returns {void}
+     * @param {HTMLInputElement} checkbox
+     * @returns {Promise<void>}
      */
-    const changeCheckboxValue = (checkbox, type) => {
+    const changeCheckboxValue = async (checkbox) => {
         const label = util.disableCheckbox(checkbox);
 
-        request(HTTP_PATCH, '/api/user')
-            .token(session.getToken())
-            .body({ [type]: checkbox.checked })
-            .send()
-            .finally(() => label.restore());
-    };
-
-    /**
-     * @param {HTMLButtonElement} button
-     * @returns {void}
-     */
-    const tenor = (button) => {
-        const btn = util.disableButton(button);
-
-        const form = document.getElementById('dashboard-tenorkey');
-        form.disabled = true;
-
-        request(HTTP_PATCH, '/api/user')
-            .token(session.getToken())
-            .body({ tenor_key: form.value.length ? form.value : null })
-            .send()
-            .then(() => util.notify(`success ${form.value.length ? 'add' : 'remove'} tenor key`).success())
-            .finally(() => {
-                form.disabled = false;
-                btn.restore();
-            });
-    };
-
-    /**
-     * @param {HTMLButtonElement} button
-     * @returns {void}
-     */
-    const regenerate = (button) => {
-        if (!util.ask('Are you sure?')) {
-            return;
+        try {
+            await api.updateSettings({ [switches[checkbox.id]]: checkbox.checked });
+        } catch (err) {
+            checkbox.checked = !checkbox.checked;
+            util.notify(errorMessage(err)).error();
+        } finally {
+            label.restore();
         }
-
-        const btn = util.disableButton(button);
-
-        request(HTTP_PUT, '/api/key')
-            .token(session.getToken())
-            .send(dto.statusResponse)
-            .then((res) => {
-                if (!res.data.status) {
-                    return;
-                }
-
-                getUserStats();
-            })
-            .finally(() => btn.restore());
     };
 
     /**
      * @param {HTMLButtonElement} button
-     * @returns {void}
+     * @returns {Promise<void>}
      */
-    const changePassword = (button) => {
+    const changePassword = async (button) => {
         const old = document.getElementById('old_password');
         const newest = document.getElementById('new_password');
 
         if (old.value.length === 0 || newest.value.length === 0) {
-            util.notify('Password cannot be empty').warning();
+            util.notify('Password tidak boleh kosong.').warning();
             return;
         }
 
         old.disabled = true;
         newest.disabled = true;
-
         const btn = util.disableButton(button);
 
-        request(HTTP_PATCH, '/api/user')
-            .token(session.getToken())
-            .body({
-                old_password: old.value,
-                new_password: newest.value,
-            })
-            .send(dto.statusResponse)
-            .then((res) => {
-                if (!res.data.status) {
-                    return;
-                }
-
-                old.value = null;
-                newest.value = null;
-                util.notify('Success change password').success();
-            })
-            .finally(() => {
-                btn.restore(true);
-
-                old.disabled = false;
-                newest.disabled = false;
-            });
+        try {
+            await api.changePassword(old.value, newest.value);
+            old.value = '';
+            newest.value = '';
+            util.notify('Password berhasil diubah.').success();
+        } catch (err) {
+            util.notify(errorMessage(err)).error();
+        } finally {
+            btn.restore(true);
+            old.disabled = false;
+            newest.disabled = false;
+        }
     };
 
     /**
      * @param {HTMLButtonElement} button
-     * @returns {void}
+     * @returns {Promise<void>}
      */
-    const changeName = (button) => {
+    const changeName = async (button) => {
         const name = document.getElementById('form-name');
+        const value = name.value.trim();
 
-        if (name.value.length === 0) {
-            util.notify('Name cannot be empty').warning();
+        if (value.length < 2) {
+            util.notify('Nama minimal 2 karakter.').warning();
             return;
         }
 
         name.disabled = true;
         const btn = util.disableButton(button);
 
-        request(HTTP_PATCH, '/api/user')
-            .token(session.getToken())
-            .body({ name: name.value })
-            .send(dto.statusResponse)
-            .then((res) => {
-                if (!res.data.status) {
-                    return;
-                }
+        try {
+            await api.changeName(value);
+            showName(value);
+            util.notify('Nama berhasil diubah.').success();
+        } catch (err) {
+            util.notify(errorMessage(err)).error();
+        } finally {
+            name.disabled = false;
+            btn.restore(true);
+        }
+    };
 
-                util.safeInnerHTML(document.getElementById('dashboard-name'), `${util.escapeHtml(name.value)}<i class="fa-solid fa-hands text-warning ms-2"></i>`);
-                util.notify('Success change name').success();
-            })
-            .finally(() => {
-                name.disabled = false;
-                btn.restore(true);
-            });
+    /**
+     * Awalan ' mencegah isian tamu dijalankan sebagai rumus saat dibuka di Excel.
+     * @param {unknown} value
+     * @returns {string}
+     */
+    const csvCell = (value) => {
+        const text = String(value ?? '');
+        const safe = /^[=+\-@\t\r]/.test(text) ? `'${text}` : text;
+
+        return `"${safe.replace(/"/g, '""')}"`;
     };
 
     /**
      * @param {HTMLButtonElement} button
-     * @returns {void}
+     * @returns {Promise<void>}
      */
-    const download = (button) => {
+    const download = async (button) => {
         const btn = util.disableButton(button);
-        request(HTTP_GET, '/api/download')
-            .token(session.getToken())
-            .withDownload('download', 'csv')
-            .send()
-            .finally(() => btn.restore());
+
+        try {
+            const rows = await api.exportComments();
+            const header = ['ID', 'Tipe', 'Nama', 'Kehadiran', 'Ucapan', 'Suka', 'Waktu'];
+            const presenceLabel = { true: 'Datang', false: 'Berhalangan', null: '' };
+            const lines = rows.map((c) => [
+                c.uuid,
+                c.is_parent ? 'Ucapan' : 'Balasan',
+                c.name,
+                presenceLabel[c.presence],
+                c.comment,
+                c.like_count,
+                c.created_at.toISOString(),
+            ].map(csvCell).join(','));
+
+            const csv = '﻿' + [header.map(csvCell).join(','), ...lines].join('\r\n');
+            util.downloadBlob(new Blob([csv], { type: 'text/csv;charset=utf-8' }), `ucapan_undangan_${Date.now()}.csv`);
+        } catch (err) {
+            util.notify(errorMessage(err)).error();
+        } finally {
+            btn.restore();
+        }
     };
 
     /**
      * @returns {void}
      */
     const enableButtonName = () => {
-        const btn = document.getElementById('button-change-name');
-        if (btn.disabled) {
-            btn.disabled = false;
-        }
+        document.getElementById('button-change-name').disabled = false;
     };
 
     /**
      * @returns {void}
      */
     const enableButtonPassword = () => {
-        const btn = document.getElementById('button-change-password');
         const old = document.getElementById('old_password');
-
-        if (btn.disabled && old.value.length !== 0) {
-            btn.disabled = false;
-        }
-    };
-
-    /**
-     * @param {HTMLFormElement} form 
-     * @param {string|null} [query=null] 
-     * @returns {void}
-     */
-    const openLists = (form, query = null) => {
-        let timezones = Intl.supportedValuesOf('timeZone');
-        const dropdown = document.getElementById('dropdown-tz-list');
-
-        if (form.value && form.value.trim().length > 0) {
-            timezones = timezones.filter((tz) => tz.toLowerCase().includes(form.value.trim().toLowerCase()));
-        }
-
-        if (query === null) {
-            document.addEventListener('click', (e) => {
-                if (!form.contains(e.currentTarget) && !dropdown.contains(e.currentTarget)) {
-                    if (form.value.trim().length <= 0) {
-                        form.setCustomValidity('Timezone cannot be empty.');
-                        form.reportValidity();
-                        return;
-                    }
-
-                    form.setCustomValidity('');
-                    dropdown.classList.add('d-none');
-                }
-            }, { once: true, capture: true });
-        }
-
-        dropdown.replaceChildren();
-        dropdown.classList.remove('d-none');
-
-        timezones.slice(0, 20).forEach((tz) => {
-            const item = document.createElement('button');
-            item.type = 'button';
-            item.className = 'list-group-item list-group-item-action py-1 small';
-            item.textContent = `${tz} (${util.getGMTOffset(tz)})`;
-            item.onclick = () => {
-                form.value = tz;
-                dropdown.classList.add('d-none');
-                document.getElementById('button-timezone').disabled = false;
-            };
-            dropdown.appendChild(item);
-        });
-    };
-
-    /**
-     * @param {HTMLButtonElement} button
-     * @returns {void}
-     */
-    const changeTz = (button) => {
-        const tz = document.getElementById('form-timezone');
-
-        if (tz.value.length === 0) {
-            util.notify('Time zone cannot be empty').warning();
-            return;
-        }
-
-        if (!Intl.supportedValuesOf('timeZone').includes(tz.value)) {
-            util.notify('Timezone not supported').warning();
-            return;
-        }
-
-        tz.disabled = true;
-        const btn = util.disableButton(button);
-
-        request(HTTP_PATCH, '/api/user')
-            .token(session.getToken())
-            .body({ tz: tz.value })
-            .send(dto.statusResponse)
-            .then((res) => {
-                if (!res.data.status) {
-                    return;
-                }
-
-                util.notify('Success change tz').success();
-            })
-            .finally(() => {
-                tz.disabled = false;
-                btn.restore(true);
-            });
+        document.getElementById('button-change-password').disabled = old.value.length === 0;
     };
 
     /**
      * @returns {void}
      */
     const logout = () => {
-        if (!util.ask('Are you sure?')) {
-            return;
+        if (util.ask('Yakin ingin keluar?')) {
+            auth.clearSession();
         }
-
-        auth.clearSession();
     };
 
     /**
-     * @returns {void}
+     * @returns {Promise<void>}
      */
-    const pageLoaded = () => {
+    const pageLoaded = async () => {
         lang.init();
-        lang.setDefault('en');
+        lang.setDefault('id');
 
         comment.init();
         offline.init();
         theme.spyTop();
 
-        document.addEventListener('hidden.bs.modal', getUserStats);
-
-        const raw = window.location.hash.slice(1);
-        if (raw.length > 0) {
-            session.setToken(raw);
-            window.history.replaceState({}, document.title, window.location.pathname);
+        if (!firebase.isConfigured()) {
+            comment.disable();
+            util.notify('Firebase belum dikonfigurasi. Lihat docs/TUTORIAL_FIREBASE.md').warning();
+            return;
         }
 
-        session.isValid() ? getUserStats() : auth.clearSession();
+        document.addEventListener('hidden.bs.modal', getUserStats);
+
+        const user = await api.currentUser();
+        if (user && await api.isAdminUser(user)) {
+            session.setAdmin(true);
+            getUserStats();
+        } else {
+            auth.clearSession();
+        }
     };
 
     /**
      * @returns {object}
      */
     const init = () => {
-        auth.init();
+        setStoragePrefix('admin_');
+        firebase.setAppName('admin');
         theme.init();
-        session.init();
 
-        if (!session.isAdmin()) {
-            storage('owns').clear();
-            storage('likes').clear();
-            storage('config').clear();
-            storage('comment').clear();
-            storage('session').clear();
-            storage('information').clear();
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', pageLoaded, { once: true });
+        } else {
+            pageLoaded();
         }
-
-        window.addEventListener('load', () => pool.init(pageLoaded, ['gif']));
 
         return {
             util,
@@ -356,16 +255,12 @@ export const admin = (() => {
                 auth,
                 navbar,
                 logout,
-                tenor,
                 download,
-                regenerate,
                 changeName,
                 changePassword,
                 changeCheckboxValue,
                 enableButtonName,
                 enableButtonPassword,
-                openLists,
-                changeTz,
             },
         };
     };

@@ -1,13 +1,10 @@
-import { gif } from './gif.js';
 import { card } from './card.js';
 import { like } from './like.js';
 import { util } from '../../common/util.js';
 import { pagination } from './pagination.js';
-import { dto } from '../../connection/dto.js';
-import { lang } from '../../common/language.js';
 import { storage } from '../../common/storage.js';
 import { session } from '../../common/session.js';
-import { request, HTTP_GET, HTTP_POST, HTTP_DELETE, HTTP_PUT, HTTP_STATUS_CREATED } from '../../connection/request.js';
+import { api, errorMessage } from '../../connection/api.js';
 
 export const comment = (() => {
 
@@ -32,20 +29,21 @@ export const comment = (() => {
     const lastRender = [];
 
     /**
+     * @param {string} message
      * @returns {string}
      */
-    const onNullComment = () => {
-        const desc = lang
-            .on('id', '📢 Yuk, share undangan ini biar makin rame komentarnya! 🎉')
-            .on('en', '📢 Let\'s share this invitation to get more comments! 🎉')
-            .get();
-
-        return `<div class="text-center p-4 mx-0 mt-0 mb-3 bg-theme-auto rounded-4 shadow"><p class="fw-bold p-0 m-0" style="font-size: 0.95rem;">${desc}</p></div>`;
+    const renderNotice = (message) => {
+        return `<div class="text-center p-4 mx-0 mt-0 mb-3 bg-theme-auto rounded-4 shadow"><p class="fw-bold p-0 m-0" style="font-size: 0.95rem;">${util.escapeHtml(message)}</p></div>`;
     };
 
     /**
-     * @param {string} id 
-     * @param {boolean} disabled 
+     * @returns {string}
+     */
+    const onNullComment = () => renderNotice('📢 Jadilah yang pertama mengirim ucapan dan doa! 🎉');
+
+    /**
+     * @param {string} id
+     * @param {boolean} disabled
      * @returns {void}
      */
     const changeActionButton = (id, disabled) => {
@@ -64,7 +62,7 @@ export const comment = (() => {
     };
 
     /**
-     * @param {HTMLButtonElement} button 
+     * @param {HTMLButtonElement} button
      * @returns {void}
      */
     const showOrHide = (button) => {
@@ -74,25 +72,17 @@ export const comment = (() => {
         const currentShow = showHide.get('show');
 
         button.setAttribute('data-show', isShow ? 'false' : 'true');
-        button.innerText = isShow ? `Show replies (${ids.length})` : 'Hide replies';
+        button.innerText = isShow ? `Lihat balasan (${ids.length})` : 'Sembunyikan balasan';
         showHide.set('show', isShow ? currentShow.filter((i) => i !== uuid) : [...currentShow, uuid]);
 
-        for (const id of ids) {
-            showHide.set('hidden', showHide.get('hidden').map((i) => {
-                if (i.uuid === id) {
-                    i.show = !isShow;
-                }
+        showHide.set('hidden', showHide.get('hidden').map((i) => (ids.includes(i.uuid) ? { ...i, show: !isShow } : i)));
 
-                return i;
-            }));
-
-            document.getElementById(id).classList.toggle('d-none', isShow);
-        }
+        ids.forEach((id) => document.getElementById(id).classList.toggle('d-none', isShow));
     };
 
     /**
-     * @param {HTMLAnchorElement} anchor 
-     * @param {string} uuid 
+     * @param {HTMLAnchorElement} anchor
+     * @param {string} uuid
      * @returns {void}
      */
     const showMore = (anchor, uuid) => {
@@ -100,85 +90,36 @@ export const comment = (() => {
         const original = util.base64Decode(content.getAttribute('data-comment'));
         const isCollapsed = anchor.getAttribute('data-show') === 'false';
 
-        util.safeInnerHTML(content, util.convertMarkdownToHTML(util.escapeHtml(isCollapsed ? original : original.slice(0, card.maxCommentLength) + '...')));
+        util.safeInnerHTML(content, card.format(isCollapsed ? original : original.slice(0, card.maxCommentLength) + '...'));
         anchor.innerText = isCollapsed ? 'Sebagian' : 'Selengkapnya';
         anchor.setAttribute('data-show', isCollapsed ? 'true' : 'false');
     };
 
     /**
-     * @param {ReturnType<typeof dto.getCommentResponse>} c
-     * @returns {Promise<void>}
-     */
-    const fetchTracker = async (c) => {
-        if (c.comments) {
-            await Promise.all(c.comments.map((v) => fetchTracker(v)));
-        }
-
-        if (!c.ip || !c.user_agent || c.is_admin) {
-            return;
-        }
-
-        /**
-         * @param {string} result 
-         * @returns {void}
-         */
-        const setResult = (result) => {
-            const commentIp = document.getElementById(`ip-${util.escapeHtml(c.uuid)}`);
-            util.safeInnerHTML(commentIp, `<i class="fa-solid fa-location-dot me-1"></i>${util.escapeHtml(c.ip)} <strong>${util.escapeHtml(result)}</strong>`);
-        };
-
-        // Free for commercial and non-commercial use.
-        await request(HTTP_GET, `https://apip.cc/api-json/${c.ip}`)
-            .withCache()
-            .withRetry()
-            .default()
-            .then((res) => res.json())
-            .then((res) => {
-                let result = 'localhost';
-
-                if (res.status === 'success') {
-                    if (res.City.length !== 0 && res.RegionName.length !== 0) {
-                        result = res.City + ' - ' + res.RegionName;
-                    } else if (res.Capital.length !== 0 && res.CountryName.length !== 0) {
-                        result = res.Capital + ' - ' + res.CountryName;
-                    }
-                }
-
-                setResult(result);
-            })
-            .catch((err) => setResult(err.message));
-    };
-
-    /**
-     * @param {ReturnType<typeof dto.getCommentsResponse>} items 
-     * @param {ReturnType<typeof dto.commentShowMore>[]} hide 
-     * @returns {ReturnType<typeof dto.commentShowMore>[]}
+     * @param {object[]} items
+     * @param {{ uuid: string, show: boolean }[]} hide
+     * @returns {{ uuid: string, show: boolean }[]}
      */
     const traverse = (items, hide = []) => {
         const dataShow = showHide.get('show');
 
         const buildHide = (lists) => lists.forEach((item) => {
-            if (hide.find((i) => i.uuid === item.uuid)) {
-                buildHide(item.comments);
-                return;
+            if (!hide.find((i) => i.uuid === item.uuid)) {
+                hide.push({ uuid: item.uuid, show: false });
             }
 
-            hide.push(dto.commentShowMore(item.uuid));
             buildHide(item.comments);
         });
 
         const setVisible = (lists) => lists.forEach((item) => {
-            if (!dataShow.includes(item.uuid)) {
-                setVisible(item.comments);
-                return;
+            if (dataShow.includes(item.uuid)) {
+                item.comments.forEach((c) => {
+                    const i = hide.findIndex((h) => h.uuid === c.uuid);
+                    if (i !== -1) {
+                        hide[i].show = true;
+                    }
+                });
             }
-
-            item.comments.forEach((c) => {
-                const i = hide.findIndex((h) => h.uuid === c.uuid);
-                if (i !== -1) {
-                    hide[i].show = true;
-                }
-            });
 
             setVisible(item.comments);
         });
@@ -190,96 +131,76 @@ export const comment = (() => {
     };
 
     /**
-     * @returns {Promise<ReturnType<typeof dto.getCommentsResponse>>}
+     * @returns {Promise<void>}
      */
-    const show = () => {
-
-        // remove all event listener.
-        lastRender.forEach((u) => {
-            like.removeListener(u);
-        });
+    const show = async () => {
+        lastRender.forEach((u) => like.removeListener(u));
 
         if (comments.getAttribute('data-loading') === 'false') {
             comments.setAttribute('data-loading', 'true');
             comments.innerHTML = card.renderLoading().repeat(pagination.getPer());
         }
 
-        return request(HTTP_GET, `/api/v2/comment?per=${pagination.getPer()}&next=${pagination.getNext()}&lang=${lang.getLanguage()}`)
-            .token(session.getToken())
-            .withCache(1000 * 30)
-            .withForceCache()
-            .send(dto.getCommentsResponseV2)
-            .then(async (res) => {
-                comments.setAttribute('data-loading', 'false');
+        try {
+            const res = await api.listComments(pagination.getPer(), pagination.getNext());
 
-                for (const u of lastRender) {
-                    await gif.remove(u);
-                }
-
-                if (res.data.lists.length === 0) {
-                    comments.innerHTML = onNullComment();
-                    return res;
-                }
-
+            if (res.lists.length === 0) {
+                lastRender.length = 0;
+                comments.innerHTML = onNullComment();
+            } else {
                 const flatten = (ii) => ii.flatMap((i) => [i.uuid, ...flatten(i.comments)]);
-                lastRender.splice(0, lastRender.length, ...flatten(res.data.lists));
-                showHide.set('hidden', traverse(res.data.lists, showHide.get('hidden')));
+                lastRender.splice(0, lastRender.length, ...flatten(res.lists));
+                showHide.set('hidden', traverse(res.lists, showHide.get('hidden')));
 
-                let data = await card.renderContentMany(res.data.lists);
-                if (res.data.lists.length < pagination.getPer()) {
-                    data += onNullComment();
-                }
+                util.safeInnerHTML(comments, card.renderContentMany(res.lists));
+                lastRender.forEach((u) => like.addListener(u));
+            }
 
-                util.safeInnerHTML(comments, data);
-
-                lastRender.forEach((u) => {
-                    like.addListener(u);
-                });
-
-                return res;
-            })
-            .then(async (res) => {
-                comments.dispatchEvent(new Event('undangan.comment.result'));
-
-                if (res.data.lists && session.isAdmin()) {
-                    await Promise.all(res.data.lists.map((v) => fetchTracker(v)));
-                }
-
-                pagination.setTotal(res.data.count);
-                comments.dispatchEvent(new Event('undangan.comment.done'));
-                return res;
-            });
+            comments.dispatchEvent(new Event('undangan.comment.result'));
+            pagination.setTotal(res.count);
+        } catch (err) {
+            console.error(err);
+            comments.innerHTML = renderNotice(`Ucapan gagal dimuat. ${errorMessage(err)}`);
+        } finally {
+            comments.setAttribute('data-loading', 'false');
+            comments.dispatchEvent(new Event('undangan.comment.done'));
+        }
     };
 
     /**
-     * @param {HTMLButtonElement} button 
+     * @param {HTMLButtonElement} button
      * @returns {Promise<void>}
      */
     const remove = async (button) => {
-        if (!util.ask('Are you sure?')) {
+        if (!util.ask('Yakin ingin menghapus ucapan ini?')) {
             return;
         }
 
         const id = button.getAttribute('data-uuid');
-
-        if (session.isAdmin()) {
-            owns.set(id, button.getAttribute('data-own'));
-        }
+        const element = document.getElementById(id);
+        const isParent = element.parentElement === comments;
+        const hasChildren = document.getElementById(`reply-content-${id}`).children.length > 0;
 
         changeActionButton(id, true);
         const btn = util.disableButton(button);
         const likes = like.getButtonLike(id);
         likes.disabled = true;
 
-        const status = await request(HTTP_DELETE, '/api/comment/' + owns.get(id))
-            .token(session.getToken())
-            .send(dto.statusResponse)
-            .then((res) => res.data.status);
-
-        if (!status) {
+        try {
+            await api.deleteComment(id, isParent);
+        } catch (err) {
+            util.notify(errorMessage(err)).error();
             btn.restore();
             likes.disabled = false;
             changeActionButton(id, false);
+            return;
+        }
+
+        owns.unset(id);
+
+        // Balasan dari tamu lain tetap tersimpan, jadi muat ulang untuk menampilkan posisinya.
+        if (!isParent && hasChildren) {
+            await show();
             return;
         }
 
@@ -292,8 +213,12 @@ export const comment = (() => {
             }
         });
 
-        owns.unset(id);
-        document.getElementById(id).remove();
+        like.removeListener(id);
+        element.remove();
+
+        if (isParent) {
+            pagination.setTotal(pagination.geTotal() - 1);
+        }
 
         if (comments.children.length === 0) {
             comments.innerHTML = onNullComment();
@@ -301,236 +226,180 @@ export const comment = (() => {
     };
 
     /**
-     * @param {HTMLButtonElement} button 
+     * @param {HTMLButtonElement} button
      * @returns {Promise<void>}
      */
     const update = async (button) => {
         const id = button.getAttribute('data-uuid');
-
-        let isPresent = false;
-        const presence = document.getElementById(`form-inner-presence-${id}`);
-        if (presence) {
-            presence.disabled = true;
-            isPresent = presence.value === '1';
-        }
-
-        const badge = document.getElementById(`badge-${id}`);
-        const isChecklist = !!badge && badge.getAttribute('data-is-presence') === 'true';
-
-        const gifIsOpen = gif.isOpen(id);
-        const gifId = gif.getResultId(id);
-        const gifCancel = gif.buttonCancel(id);
-
-        if (gifIsOpen && gifId) {
-            gifCancel.hide();
-        }
-
         const form = document.getElementById(`form-inner-${id}`);
+        const presence = document.getElementById(`form-inner-presence-${id}`);
+        const badge = document.getElementById(`badge-${id}`);
 
-        if (id && !gifIsOpen && util.base64Encode(form.value) === form.getAttribute('data-original') && isChecklist === isPresent) {
+        const isPresent = presence ? presence.value === '1' : false;
+        const wasPresent = !!badge && badge.getAttribute('data-is-presence') === 'true';
+        const value = form.value.trim();
+
+        if (util.base64Encode(form.value) === form.getAttribute('data-original') && (!presence || wasPresent === isPresent)) {
             removeInnerForm(id);
             return;
         }
 
-        if (!gifIsOpen && form.value?.trim().length === 0) {
-            util.notify('Comments cannot be empty.').warning();
+        if (value.length === 0) {
+            util.notify('Ucapan tidak boleh kosong.').warning();
             return;
         }
 
-        if (form) {
-            form.disabled = true;
-        }
-
-        const cancel = document.querySelector(`[onclick="undangan.comment.cancel(this, '${id}')"]`);
-        if (cancel) {
-            cancel.disabled = true;
-        }
+        const cancelButton = document.querySelector(`[onclick="undangan.comment.cancel(this, '${id}')"]`);
+        const fields = [form, presence, cancelButton].filter(Boolean);
+        fields.forEach((f) => {
+            f.disabled = true;
+        });
 
         const btn = util.disableButton(button);
 
-        const status = await request(HTTP_PUT, `/api/comment/${owns.get(id)}?lang=${lang.getLanguage()}`)
-            .token(session.getToken())
-            .body(dto.updateCommentRequest(presence ? isPresent : null, gifIsOpen ? null : form.value, gifId))
-            .send(dto.statusResponse)
-            .then((res) => res.data.status);
-
-        if (form) {
-            form.disabled = false;
-        }
-
-        if (cancel) {
-            cancel.disabled = false;
-        }
-
-        if (presence) {
-            presence.disabled = false;
-        }
-
-        btn.restore();
-
-        if (gifIsOpen && gifId) {
-            gifCancel.show();
-        }
-
-        if (!status) {
+        try {
+            await api.updateComment(id, { comment: value, presence: presence ? isPresent : null });
+        } catch (err) {
+            util.notify(errorMessage(err)).error();
             return;
-        }
-
-        if (gifIsOpen && gifId) {
-            document.getElementById(`img-gif-${id}`).src = document.getElementById(`gif-result-${id}`)?.querySelector('img').src;
-            gifCancel.click();
+        } finally {
+            fields.forEach((f) => {
+                f.disabled = false;
+            });
+            btn.restore();
         }
 
         removeInnerForm(id);
 
-        if (!gifIsOpen) {
-            const showButton = document.querySelector(`[onclick="undangan.comment.showMore(this, '${id}')"]`);
+        const showButton = document.querySelector(`[onclick="undangan.comment.showMore(this, '${id}')"]`);
+        const content = document.getElementById(`content-${id}`);
+        const isLong = value.length > card.maxCommentLength;
+        const isTruncated = isLong && (!showButton || showButton.getAttribute('data-show') === 'false');
 
-            const content = document.getElementById(`content-${id}`);
-            content.setAttribute('data-comment', util.base64Encode(form.value));
+        content.setAttribute('data-comment', util.base64Encode(value));
+        util.safeInnerHTML(content, card.format(isTruncated ? value.slice(0, card.maxCommentLength) + '...' : value));
+        showButton?.parentElement.classList.toggle('d-none', !isLong);
 
-            const original = util.convertMarkdownToHTML(util.escapeHtml(form.value));
-            if (form.value.length > card.maxCommentLength) {
-                util.safeInnerHTML(content, showButton?.getAttribute('data-show') === 'false' ? original.slice(0, card.maxCommentLength) + '...' : original);
-                showButton?.classList.replace('d-none', 'd-block');
-            } else {
-                util.safeInnerHTML(content, original);
-                showButton?.classList.replace('d-block', 'd-none');
-            }
-        }
-
-        if (presence) {
-            document.getElementById('form-presence').value = isPresent ? '1' : '2';
-            storage('information').set('presence', isPresent);
-        }
-
-        if (!presence || !badge) {
+        if (!presence) {
             return;
         }
 
-        badge.classList.toggle('fa-circle-xmark', !isPresent);
-        badge.classList.toggle('text-danger', !isPresent);
+        document.getElementById('form-presence').value = isPresent ? '1' : '2';
+        storage('information').set('presence', isPresent);
 
-        badge.classList.toggle('fa-circle-check', isPresent);
-        badge.classList.toggle('text-success', isPresent);
+        if (badge) {
+            badge.setAttribute('data-is-presence', isPresent ? 'true' : 'false');
+            badge.classList.toggle('fa-circle-xmark', !isPresent);
+            badge.classList.toggle('text-danger', !isPresent);
+            badge.classList.toggle('fa-circle-check', isPresent);
+            badge.classList.toggle('text-success', isPresent);
+        }
     };
 
     /**
-     * @param {HTMLButtonElement} button 
+     * @param {string} id
+     * @param {object} data
+     * @returns {void}
+     */
+    const appendReply = (id, data) => {
+        showHide.set('hidden', showHide.get('hidden').concat([{ uuid: data.uuid, show: true }]));
+
+        if (!showHide.get('show').includes(id)) {
+            showHide.set('show', showHide.get('show').concat([id]));
+        }
+
+        removeInnerForm(id);
+        document.getElementById(`reply-content-${id}`).insertAdjacentHTML('beforeend', card.renderContent(data));
+
+        const anchorTag = document.getElementById(`button-${id}`).querySelector('a');
+        if (anchorTag?.getAttribute('data-show') === 'false') {
+            showOrHide(anchorTag);
+        }
+
+        const previous = anchorTag ? anchorTag.getAttribute('data-uuids').split(',') : [];
+        anchorTag?.remove();
+
+        const readMore = document.createRange().createContextualFragment(card.renderReadMore(id, [...previous, data.uuid]));
+        const buttonLike = like.getButtonLike(id);
+        buttonLike.parentNode.insertBefore(readMore, buttonLike);
+    };
+
+    /**
+     * @param {HTMLButtonElement} button
      * @returns {Promise<void>}
      */
     const send = async (button) => {
         const id = button.getAttribute('data-uuid');
-
         const name = document.getElementById('form-name');
-        const nameValue = name.value;
+        const nameValue = name.value.trim();
 
-        if (nameValue.length === 0) {
-            util.notify('Name cannot be empty.').warning();
-
-            if (id) {
-                // scroll to form.
-                name.scrollIntoView({ block: 'center' });
-            }
+        if (nameValue.length < 2) {
+            util.notify('Nama minimal 2 karakter.').warning();
+            name.scrollIntoView({ block: 'center' });
             return;
         }
 
         const presence = document.getElementById('form-presence');
         if (!id && presence && presence.value === '0') {
-            util.notify('Please select your attendance status.').warning();
+            util.notify('Mohon pilih konfirmasi kehadiran Anda.').warning();
             return;
         }
 
-        const gifIsOpen = gif.isOpen(id ? id : gif.default);
-        const gifId = gif.getResultId(id ? id : gif.default);
-        const gifCancel = gif.buttonCancel(id);
-
-        if (gifIsOpen && !gifId) {
-            util.notify('Gif cannot be empty.').warning();
+        const form = document.getElementById(id ? `form-inner-${id}` : 'form-comment');
+        const value = form.value.trim();
+        if (value.length === 0) {
+            util.notify('Ucapan tidak boleh kosong.').warning();
             return;
         }
 
-        if (gifIsOpen && gifId) {
-            gifCancel.hide();
-        }
+        const isAdmin = session.isAdmin();
+        const isPresent = presence ? presence.value === '1' : true;
+        const cancelButton = id ? document.querySelector(`[onclick="undangan.comment.cancel(this, '${id}')"]`) : null;
+        const fields = [form, cancelButton, ...(isAdmin ? [] : [name, presence])].filter(Boolean);
 
-        const form = document.getElementById(`form-${id ? `inner-${id}` : 'comment'}`);
-        if (!gifIsOpen && form.value?.trim().length === 0) {
-            util.notify('Comments cannot be empty.').warning();
-            return;
-        }
-
-        if (!id && name && !session.isAdmin()) {
-            name.disabled = true;
-        }
-
-        if (!session.isAdmin() && presence && presence.value !== '0') {
-            presence.disabled = true;
-        }
-
-        if (form) {
-            form.disabled = true;
-        }
-
-        const cancel = document.querySelector(`[onclick="undangan.comment.cancel(this, '${id}')"]`);
-        if (cancel) {
-            cancel.disabled = true;
-        }
+        fields.forEach((f) => {
+            f.disabled = true;
+        });
 
         const btn = util.disableButton(button);
-        const isPresence = presence ? presence.value === '1' : true;
 
-        if (!session.isAdmin()) {
+        let response = null;
+        try {
+            response = await api.createComment({
+                name: nameValue,
+                comment: value,
+                presence: isPresent,
+                parentId: id,
+                isAdmin,
+            });
+        } catch (err) {
+            util.notify(errorMessage(err)).error();
+        } finally {
+            fields.forEach((f) => {
+                f.disabled = false;
+            });
+            btn.restore();
+        }
+
+        if (!response) {
+            return;
+        }
+
+        owns.set(response.uuid, true);
+        form.value = '';
+
+        if (!isAdmin) {
             const info = storage('information');
             info.set('name', nameValue);
 
             if (!id) {
-                info.set('presence', isPresence);
+                info.set('presence', isPresent);
             }
         }
 
-        const response = await request(HTTP_POST, `/api/comment?lang=${lang.getLanguage()}`)
-            .token(session.getToken())
-            .body(dto.postCommentRequest(id, nameValue, isPresence, gifIsOpen ? null : form.value, gifId))
-            .send(dto.getCommentResponse);
-
-        if (name) {
-            name.disabled = false;
-        }
-
-        if (form) {
-            form.disabled = false;
-        }
-
-        if (cancel) {
-            cancel.disabled = false;
-        }
-
-        if (presence) {
-            presence.disabled = false;
-        }
-
-        if (gifIsOpen && gifId) {
-            gifCancel.show();
-        }
-
-        btn.restore();
-
-        if (!response || response.code !== HTTP_STATUS_CREATED) {
-            return;
-        }
-
-        owns.set(response.data.uuid, response.data.own);
-
-        if (form) {
-            form.value = null;
-        }
-
-        if (gifIsOpen && gifId) {
-            gifCancel.click();
-        }
-
-        if (!id) {
+        if (id) {
+            appendReply(id, response);
+        } else {
             if (pagination.reset()) {
                 await show();
                 comments.scrollIntoView();
@@ -538,135 +407,82 @@ export const comment = (() => {
             }
 
             pagination.setTotal(pagination.geTotal() + 1);
-            if (comments.children.length === pagination.getPer()) {
+            if (comments.children.length >= pagination.getPer()) {
                 comments.lastElementChild.remove();
             }
 
-            response.data.is_parent = true;
-            response.data.is_admin = session.isAdmin();
-            comments.insertAdjacentHTML('afterbegin', await card.renderContentMany([response.data]));
+            if (pagination.geTotal() === 1) {
+                comments.innerHTML = '';
+            }
+
+            comments.insertAdjacentHTML('afterbegin', card.renderContent(response));
             comments.scrollIntoView();
         }
 
-        if (id) {
-            showHide.set('hidden', showHide.get('hidden').concat([dto.commentShowMore(response.data.uuid, true)]));
-            showHide.set('show', showHide.get('show').concat([id]));
-
-            removeInnerForm(id);
-
-            response.data.is_parent = false;
-            response.data.is_admin = session.isAdmin();
-            document.getElementById(`reply-content-${id}`).insertAdjacentHTML('beforeend', await card.renderContentSingle(response.data));
-
-            const anchorTag = document.getElementById(`button-${id}`).querySelector('a');
-            if (anchorTag) {
-                if (anchorTag.getAttribute('data-show') === 'false') {
-                    showOrHide(anchorTag);
-                }
-
-                anchorTag.remove();
-            }
-
-            const uuids = [response.data.uuid];
-            const readMoreElement = document.createRange().createContextualFragment(card.renderReadMore(id, anchorTag ? anchorTag.getAttribute('data-uuids').split(',').concat(uuids) : uuids));
-
-            const buttonLike = like.getButtonLike(id);
-            buttonLike.parentNode.insertBefore(readMoreElement, buttonLike);
-        }
-
-        like.addListener(response.data.uuid);
-        lastRender.push(response.data.uuid);
+        like.addListener(response.uuid);
+        lastRender.push(response.uuid);
+        util.notify('Terima kasih, ucapan Anda terkirim.').success();
     };
 
     /**
      * @param {HTMLButtonElement} button
      * @param {string} id
-     * @returns {Promise<void>}
+     * @returns {void}
      */
-    const cancel = async (button, id) => {
-        const presence = document.getElementById(`form-inner-presence-${id}`);
-        const isPresent = presence ? presence.value === '1' : false;
-
-        const badge = document.getElementById(`badge-${id}`);
-        const isChecklist = badge && owns.has(id) && presence ? badge.getAttribute('data-is-presence') === 'true' : false;
-
-        const btn = util.disableButton(button);
-
-        if (gif.isOpen(id) && ((!gif.getResultId(id) && isChecklist === isPresent) || util.ask('Are you sure?'))) {
-            await gif.remove(id);
-            removeInnerForm(id);
-            return;
-        }
-
+    const cancel = (button, id) => {
         const form = document.getElementById(`form-inner-${id}`);
-        if (form.value.length === 0 || (util.base64Encode(form.value) === form.getAttribute('data-original') && isChecklist === isPresent) || util.ask('Are you sure?')) {
-            removeInnerForm(id);
-            return;
-        }
+        const isUnchanged = form.value.length === 0 || util.base64Encode(form.value) === form.getAttribute('data-original');
 
-        btn.restore();
+        if (isUnchanged || util.ask('Batalkan perubahan?')) {
+            removeInnerForm(id);
+        }
     };
 
     /**
-     * @param {string} uuid 
+     * @param {string} uuid
      * @returns {void}
      */
     const reply = (uuid) => {
         changeActionButton(uuid, true);
-
-        gif.remove(uuid).then(() => {
-            gif.onOpen(uuid, () => gif.removeGifSearch(uuid));
-            document.getElementById(`button-${uuid}`).insertAdjacentElement('afterend', card.renderReply(uuid));
-        });
+        document.getElementById(`button-${uuid}`).insertAdjacentElement('afterend', card.renderReply(uuid));
+        document.getElementById(`form-inner-${uuid}`).focus();
     };
 
     /**
-     * @param {HTMLButtonElement} button 
+     * @param {HTMLButtonElement} button
      * @param {boolean} is_parent
-     * @returns {Promise<void>}
+     * @returns {void}
      */
-    const edit = async (button, is_parent) => {
+    const edit = (button, is_parent) => {
         const id = button.getAttribute('data-uuid');
-
         changeActionButton(id, true);
-
-        if (session.isAdmin()) {
-            owns.set(id, button.getAttribute('data-own'));
-        }
 
         const badge = document.getElementById(`badge-${id}`);
         const isChecklist = !!badge && badge.getAttribute('data-is-presence') === 'true';
-
-        const gifImage = document.getElementById(`img-gif-${id}`);
-        if (gifImage) {
-            await gif.remove(id);
-        }
-
         const isParent = is_parent && !session.isAdmin();
-        document.getElementById(`button-${id}`).insertAdjacentElement('afterend', card.renderEdit(id, isChecklist, isParent, !!gifImage));
 
-        if (gifImage) {
-            gif.onOpen(id, () => {
-                gif.removeGifSearch(id);
-                gif.removeButtonBack(id);
-            });
-
-            await gif.open(id);
-            return;
-        }
+        document.getElementById(`button-${id}`).insertAdjacentElement('afterend', card.renderEdit(id, isChecklist, isParent));
 
         const formInner = document.getElementById(`form-inner-${id}`);
-        const original = util.base64Decode(document.getElementById(`content-${id}`)?.getAttribute('data-comment'));
+        const original = util.base64Decode(document.getElementById(`content-${id}`).getAttribute('data-comment'));
 
         formInner.value = original;
         formInner.setAttribute('data-original', util.base64Encode(original));
     };
 
     /**
+     * Ditampilkan bila Firebase belum dikonfigurasi.
+     * @returns {void}
+     */
+    const disable = () => {
+        comments.innerHTML = renderNotice('Fitur ucapan belum aktif karena Firebase belum dikonfigurasi.');
+        document.querySelector('[onclick="undangan.comment.send(this)"]')?.setAttribute('disabled', 'true');
+    };
+
+    /**
      * @returns {void}
      */
     const init = () => {
-        gif.init();
         like.init();
         card.init();
         pagination.init();
@@ -687,7 +503,6 @@ export const comment = (() => {
     };
 
     return {
-        gif,
         like,
         pagination,
         init,
@@ -697,6 +512,7 @@ export const comment = (() => {
         remove,
         update,
         cancel,
+        disable,
         show,
         showMore,
         showOrHide,

@@ -1,6 +1,4 @@
-import { progress } from './progress.js';
 import { util } from '../../common/util.js';
-import { cache } from '../../connection/cache.js';
 
 export const audio = (() => {
 
@@ -8,55 +6,43 @@ export const audio = (() => {
     const statePause = '<i class="fa-solid fa-circle-play"></i>';
 
     /**
-     * @param {boolean} [playOnOpen=true]
-     * @returns {Promise<void>}
+     * Musik di-stream saat undangan dibuka, tidak menunda halaman pembuka.
+     * @returns {void}
      */
-    const load = async (playOnOpen = true) => {
-
+    const load = () => {
         const url = document.body.getAttribute('data-audio');
-        if (!url) {
-            progress.complete('audio', true);
+        const music = document.getElementById('button-music');
+        if (!url || !music) {
             return;
         }
 
-        /**
-         * @type {HTMLAudioElement|null}
-         */
-        let audioEl = null;
-
-        try {
-            audioEl = new Audio(await cache('audio').withForceCache().get(url, progress.getAbort()));
-            audioEl.loop = true;
-            audioEl.muted = false;
-            audioEl.autoplay = false;
-            audioEl.controls = false;
-
-            progress.complete('audio');
-        } catch {
-            progress.invalid('audio');
-            return;
-        }
+        const audioEl = new Audio();
+        audioEl.loop = true;
+        audioEl.preload = 'none';
+        audioEl.src = url;
 
         let isPlay = false;
-        const music = document.getElementById('button-music');
+        let resumeOnReturn = false;
 
         /**
          * @returns {Promise<void>}
          */
         const play = async () => {
-            if (!navigator.onLine || !music) {
-                return;
-            }
-
             music.disabled = true;
+
             try {
                 await audioEl.play();
                 isPlay = true;
-                music.disabled = false;
                 music.innerHTML = statePlay;
             } catch (err) {
                 isPlay = false;
-                util.notify(err).error();
+                music.innerHTML = statePause;
+
+                if (err.name !== 'NotAllowedError' && err.name !== 'AbortError') {
+                    util.notify('Musik gagal diputar.').error();
+                }
+            } finally {
+                music.disabled = false;
             }
         };
 
@@ -71,28 +57,27 @@ export const audio = (() => {
 
         document.addEventListener('undangan.open', () => {
             music.classList.remove('d-none');
+            play();
+        });
 
-            if (playOnOpen) {
+        // Musik berhenti saat tamu berpindah aplikasi, lalu lanjut saat kembali.
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                resumeOnReturn = isPlay;
+                if (isPlay) {
+                    pause();
+                }
+            } else if (resumeOnReturn) {
+                resumeOnReturn = false;
                 play();
             }
         });
 
         music.addEventListener('offline', pause);
-        music.addEventListener('click', () => isPlay ? pause() : play());
-    };
-
-    /**
-     * @returns {object}
-     */
-    const init = () => {
-        progress.add();
-
-        return {
-            load,
-        };
+        music.addEventListener('click', () => (isPlay ? pause() : play()));
     };
 
     return {
-        init,
+        load,
     };
 })();

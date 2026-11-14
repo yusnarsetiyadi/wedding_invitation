@@ -3,13 +3,13 @@ import { storage } from './storage.js';
 export const theme = (() => {
 
     const themeColors = {
-        '#000000': '#ffffff',
-        '#ffffff': '#000000',
-        '#212529': '#f8f9fa',
-        '#f8f9fa': '#212529'
+        '#3a2c33': '#ffffff',
+        '#ffffff': '#3a2c33',
+        '#2f2329': '#fff5f7',
+        '#fff5f7': '#2f2329'
     };
-    const themeLight = ['#ffffff', '#f8f9fa'];
-    const themeDark = ['#000000', '#212529'];
+    const themeLight = ['#ffffff', '#fff5f7'];
+    const themeDark = ['#3a2c33', '#2f2329'];
 
     let isAuto = false;
 

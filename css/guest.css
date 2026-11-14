@@ -1,14 +1,10 @@
-@import url("common.css");
-@import url("animation.css");
-
 html {
-    scrollbar-width: none !important;
-    -ms-overflow-style: none !important;
+    scrollbar-width: none;
 }
 
 .with-scrollbar {
-    scrollbar-width: auto !important;
-    -ms-overflow-style: auto !important;
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-rose) transparent;
 }
 
 .font-esthetic {
@@ -16,11 +12,11 @@ html {
 }
 
 html[data-bs-theme="light"] .font-esthetic {
-    color: var(--color-text-accent);
+    color: var(--color-mauve);
 }
 
 html[data-bs-theme="dark"] .font-esthetic {
-    color: var(--color-highlight);
+    color: var(--color-rose);
 }
 
 .font-arabic {
@@ -35,13 +31,20 @@ html[data-bs-theme="dark"] .font-esthetic {
     object-fit: cover;
 }
 
+html[data-bs-theme="light"] .img-center-crop {
+    border-color: var(--color-soft-pink) !important;
+    outline: 1px solid var(--color-champagne);
+    outline-offset: 0.25rem;
+}
+
 html[data-bs-theme="dark"] .btn-transparent {
     background-color: rgba(var(--color-dark-bg-rgb), 0.5) !important;
     backdrop-filter: blur(0.5rem);
 }
 
 html[data-bs-theme="light"] .btn-transparent {
-    background-color: rgba(var(--color-bg-primary-rgb), 0.5) !important;
+    color: var(--color-primary);
+    background-color: rgba(255, 255, 255, 0.7) !important;
     backdrop-filter: blur(0.5rem);
 }
 
@@ -53,9 +56,13 @@ html[data-bs-theme="light"] .btn-transparent {
     z-index: 1056;
 }
 
+html[data-bs-theme="light"] .loading-page {
+    background: radial-gradient(circle at 50% 20%, var(--color-white) 0%, var(--color-blush) 55%, var(--color-soft-pink) 100%);
+}
+
 html[data-bs-theme="light"] .color-theme-svg {
-    color: var(--color-card-bg);
-    background-color: var(--color-bg-primary);
+    color: var(--color-white);
+    background-color: var(--color-blush);
 }
 
 html[data-bs-theme="dark"] .color-theme-svg {
@@ -64,7 +71,7 @@ html[data-bs-theme="dark"] .color-theme-svg {
 }
 
 html[data-bs-theme="light"] .bg-light-dark {
-    background-color: var(--color-bg-primary);
+    background-color: var(--color-blush);
 }
 
 html[data-bs-theme="dark"] .bg-light-dark {
@@ -72,7 +79,7 @@ html[data-bs-theme="dark"] .bg-light-dark {
 }
 
 html[data-bs-theme="light"] .bg-white-black {
-    background-color: var(--color-card-bg);
+    background-color: var(--color-white);
 }
 
 html[data-bs-theme="dark"] .bg-white-black {
@@ -84,6 +91,27 @@ html[data-bs-theme="dark"] .bg-white-black {
     height: 100%;
     object-fit: cover;
     mask-image: linear-gradient(0.5turn, transparent, black 40%, black 60%, transparent);
+}
+
+.carousel-item img {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
+}
+
+.carousel-inner,
+#video-love-story {
+    background-color: var(--color-blush);
+}
+
+#video-love-story {
+    aspect-ratio: 16 / 9;
+}
+
+#video-love-story video {
+    display: block;
+    height: 100%;
+    object-fit: cover;
 }
 
 .width-loading {
@@ -111,6 +139,11 @@ svg {
     line-height: 0;
     shape-rendering: geometricPrecision;
     backface-visibility: hidden;
+}
+
+svg.animate-love,
+svg[data-class] {
+    color: var(--color-rose);
 }
 
 .svg-wrapper {

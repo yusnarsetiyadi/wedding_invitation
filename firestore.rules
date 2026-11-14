@@ -1,0 +1,121 @@
+rules_version = '2';
+
+// Aturan keamanan Firestore untuk undangan pernikahan.
+// Tempel seluruh isi file ini di Firebase Console > Firestore Database > Rules.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return signedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    // Dokumen settings/app boleh belum ada; nilai default-nya aktif.
+    function settingOn(key) {
+      let path = /databases/$(database)/documents/settings/app;
+      return !exists(path) || get(path).data.get(key, true) == true;
+    }
+
+    function validName(value) {
+      return value is string && value.trim().size() >= 2 && value.size() <= 50;
+    }
+
+    function validComment(value) {
+      return value is string && value.trim().size() >= 1 && value.size() <= 1000;
+    }
+
+    function validBase(data) {
+      return data.uid == request.auth.uid
+        && validName(data.name)
+        && validComment(data.comment)
+        && data.is_admin == isAdmin()
+        && data.like_count == 0
+        && data.created_at == request.time;
+    }
+
+    // Ucapan utama: punya thread_at, tidak punya parent_id/root_id.
+    function validThread(data) {
+      return data.keys().hasAll(['uid', 'name', 'comment', 'is_admin', 'like_count', 'created_at', 'thread_at'])
+        && data.keys().hasOnly(['uid', 'name', 'comment', 'presence', 'is_admin', 'like_count', 'created_at', 'thread_at'])
+        && data.thread_at == request.time
+        && (data.is_admin ? !('presence' in data) : data.presence is bool);
+    }
+
+    // Balasan: root_id wajib menunjuk ke ucapan utama pada thread yang sama.
+    function validReply(data) {
+      return data.keys().hasAll(['uid', 'name', 'comment', 'is_admin', 'like_count', 'created_at', 'parent_id', 'root_id'])
+        && data.keys().hasOnly(['uid', 'name', 'comment', 'is_admin', 'like_count', 'created_at', 'parent_id', 'root_id'])
+        && data.parent_id is string
+        && data.root_id == get(/databases/$(database)/documents/comments/$(data.parent_id)).data.get('root_id', data.parent_id)
+        && (isAdmin() || settingOn('can_reply'));
+    }
+
+    function validEdit() {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return signedIn()
+        && (isAdmin() || (resource.data.uid == request.auth.uid && settingOn('can_edit')))
+        && changed.hasOnly(['comment', 'presence', 'updated_at'])
+        && validComment(request.resource.data.comment)
+        && request.resource.data.updated_at == request.time
+        && (!changed.hasAny(['presence'])
+          || ('thread_at' in resource.data && !resource.data.is_admin && request.resource.data.presence is bool));
+    }
+
+    // Jumlah like hanya boleh berubah 1, bersamaan dengan dokumen like milik pengguna.
+    function validLikeCount(commentId) {
+      let likePath = /databases/$(database)/documents/comments/$(commentId)/likes/$(request.auth.uid);
+      let before = resource.data.like_count;
+      let after = request.resource.data.like_count;
+      return signedIn()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['like_count'])
+        && ((after == before + 1 && !exists(likePath) && existsAfter(likePath))
+          || (after == before - 1 && exists(likePath) && !existsAfter(likePath)));
+    }
+
+    function isRootOwner() {
+      return 'root_id' in resource.data
+        && get(/databases/$(database)/documents/comments/$(resource.data.root_id)).data.uid == request.auth.uid;
+    }
+
+    match /comments/{commentId} {
+      allow read: if true;
+      allow create: if signedIn()
+        && validBase(request.resource.data)
+        && (validThread(request.resource.data) || validReply(request.resource.data));
+      allow update: if validEdit() || validLikeCount(commentId);
+      allow delete: if signedIn()
+        && (isAdmin() || ((resource.data.uid == request.auth.uid || isRootOwner()) && settingOn('can_delete')));
+
+      match /likes/{uid} {
+        allow read: if signedIn() && uid == request.auth.uid;
+        allow create: if signedIn()
+          && uid == request.auth.uid
+          && request.resource.data.keys().hasOnly(['created_at'])
+          && request.resource.data.created_at == request.time
+          && getAfter(/databases/$(database)/documents/comments/$(commentId)).data.like_count
+            == get(/databases/$(database)/documents/comments/$(commentId)).data.like_count + 1;
+        allow delete: if signedIn()
+          && uid == request.auth.uid
+          && getAfter(/databases/$(database)/documents/comments/$(commentId)).data.like_count
+            == get(/databases/$(database)/documents/comments/$(commentId)).data.like_count - 1;
+      }
+    }
+
+    match /settings/{settingId} {
+      allow read: if true;
+      allow write: if isAdmin()
+        && settingId == 'app'
+        && request.resource.data.keys().hasOnly(['can_reply', 'can_edit', 'can_delete', 'is_filter', 'is_confetti_animation'])
+        && request.resource.data.values().hasOnly([true, false]);
+    }
+
+    // Dokumen admin hanya dibuat manual lewat Firebase Console.
+    match /admins/{uid} {
+      allow read: if signedIn() && uid == request.auth.uid;
+      allow write: if false;
+    }
+  }
+}

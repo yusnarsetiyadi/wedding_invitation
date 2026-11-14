@@ -1,4 +1,17 @@
-export const storage = (table) => {
+let prefix = '';
+
+/**
+ * Memisahkan data lokal halaman admin dari data tamu di browser yang sama.
+ * @param {string} value
+ * @returns {void}
+ */
+export const setStoragePrefix = (value) => {
+    prefix = value;
+};
+
+export const storage = (name) => {
+
+    const table = prefix + name;
 
     /**
      * @param {string|null} [key=null]
